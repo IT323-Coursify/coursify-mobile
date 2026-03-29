@@ -6,86 +6,134 @@ import { useRouter } from 'expo-router';
 const coursesData = [
   {
     id: '1',
-    title: 'Computer Science',
-    description: 'Study of computers and computational systems. Learn programming, algorithms, data structures, and software development.',
-    duration: '4 years',
-    careerPaths: ['Software Engineer', 'Data Scientist', 'Systems Architect', 'AI Specialist'],
+    title: 'Engineering',
+    description: 'Study of designing, building, and maintaining structures, machines, and systems across various engineering fields.',
+    duration: '5 years',
+    careerPaths: [
+      'Civil Engineer',
+      'Electrical Engineer',
+      'Mechanical Engineer',
+      'Geodetic Engineer',
+      'Environmental Engineer',
+      'Naval Architect'
+    ],
     futureWork: [
-      'Build full-stack web applications',
-      'Develop mobile apps for iOS and Android',
-      'Create machine learning models for real-world problems',
-      'Design and implement database systems',
-      'Work on open-source projects'
+      'Design infrastructure like roads and buildings',
+      'Develop electrical systems and power solutions',
+      'Create mechanical machines and tools',
+      'Work on environmental sustainability projects',
+      'Design marine vessels and offshore structures'
     ]
   },
   {
     id: '2',
-    title: 'Business Administration',
-    description: 'Learn management principles, marketing strategies, finance, and organizational leadership.',
+    title: 'Computer Science and Information Systems',
+    description: 'Focuses on computing, software development, and managing information systems in organizations.',
     duration: '4 years',
-    careerPaths: ['Business Manager', 'Marketing Director', 'Financial Analyst', 'Entrepreneur'],
+    careerPaths: [
+      'Software Developer',
+      'IT Specialist',
+      'Data Scientist',
+      'System Analyst'
+    ],
     futureWork: [
-      'Create business plans for startups',
-      'Analyze market trends and consumer behavior',
-      'Manage team projects and budgets',
-      'Develop marketing campaigns',
-      'Lead organizational change initiatives'
+      'Develop software applications',
+      'Manage databases and systems',
+      'Analyze and interpret data',
+      'Create IT solutions for businesses',
+      'Design and maintain networks'
     ]
   },
   {
     id: '3',
-    title: 'Psychology',
-    description: 'Study of human behavior, mental processes, and emotional well-being.',
+    title: 'Technology',
+    description: 'Hands-on study of industrial and technical systems used in modern industries and production.',
     duration: '4 years',
-    careerPaths: ['Clinical Psychologist', 'Counselor', 'HR Specialist', 'Researcher'],
+    careerPaths: [
+      'Technician',
+      'Automation Specialist',
+      'Manufacturing Engineer',
+      'Energy Systems Manager'
+    ],
     futureWork: [
-      'Conduct psychological assessments',
-      'Provide counseling sessions',
-      'Research human behavior patterns',
-      'Develop mental health programs',
-      'Work with diverse populations'
+      'Operate and maintain machines',
+      'Develop automated systems',
+      'Improve manufacturing processes',
+      'Work on energy efficiency projects',
+      'Handle technical repairs and diagnostics'
     ]
   },
   {
     id: '4',
-    title: 'Engineering',
-    description: 'Apply scientific and mathematical principles to design and build solutions.',
-    duration: '5 years',
-    careerPaths: ['Civil Engineer', 'Mechanical Engineer', 'Electrical Engineer', 'Project Manager'],
+    title: 'Life Sciences',
+    description: 'Study of living organisms, agriculture, and environmental sustainability.',
+    duration: '4 years',
+    careerPaths: [
+      'Agriculturist',
+      'Marine Biologist',
+      'Horticulturist',
+      'Animal Scientist'
+    ],
     futureWork: [
-      'Design infrastructure projects',
-      'Create CAD models and prototypes',
-      'Perform structural analysis',
-      'Manage construction projects',
-      'Implement sustainable solutions'
+      'Manage farms and agricultural systems',
+      'Conduct marine research',
+      'Develop sustainable farming techniques',
+      'Work in environmental conservation',
+      'Improve food production systems'
     ]
   },
   {
     id: '5',
-    title: 'Digital Marketing',
-    description: 'Learn online marketing strategies, social media management, SEO, and content creation.',
-    duration: '3 years',
-    careerPaths: ['Digital Marketing Specialist', 'SEO Analyst', 'Content Manager', 'Social Media Director'],
+    title: 'Natural Sciences',
+    description: 'Focus on scientific principles in mathematics, physics, chemistry, and environmental science.',
+    duration: '4 years',
+    careerPaths: [
+      'Scientist',
+      'Research Analyst',
+      'Laboratory Technician',
+      'Environmental Specialist'
+    ],
     futureWork: [
-      'Create social media campaigns',
-      'Optimize websites for search engines',
-      'Analyze marketing metrics and ROI',
-      'Develop email marketing strategies',
-      'Create engaging video content'
+      'Conduct scientific research',
+      'Work in laboratories',
+      'Analyze environmental data',
+      'Develop scientific solutions',
+      'Teach and share scientific knowledge'
     ]
   },
   {
     id: '6',
-    title: 'Data Science',
-    description: 'Extract insights from data using statistics, programming, and machine learning.',
+    title: 'Social Sciences',
+    description: 'Study of society, education, and human behavior in different social contexts.',
     duration: '4 years',
-    careerPaths: ['Data Scientist', 'Data Analyst', 'Business Intelligence Analyst', 'ML Engineer'],
+    careerPaths: [
+      'Teacher',
+      'Social Worker',
+      'Community Development Officer',
+      'Vocational Instructor'
+    ],
     futureWork: [
-      'Build predictive models',
-      'Create data visualizations',
-      'Clean and process large datasets',
-      'Implement ETL pipelines',
-      'Present insights to stakeholders'
+      'Teach in schools and institutions',
+      'Work with communities and social programs',
+      'Develop educational materials',
+      'Support social welfare initiatives',
+      'Train students in technical skills'
+    ]
+  },
+  {
+    id: '7',
+    title: 'Art and Humanities',
+    description: 'Focus on creative design, culture, and human expression through architecture and arts.',
+    duration: '5 years',
+    careerPaths: [
+      'Architect',
+    ],
+    futureWork: [
+      'Design buildings and structures',
+      'Plan urban spaces',
+      'Create architectural drawings',
+      'Work on construction projects',
+      'Develop sustainable design concepts'
     ]
   }
 ];
@@ -137,7 +185,6 @@ function CourseDetailModal({ visible, course, onClose }) {
             {/* Duration Badge in Modal */}
             <View style={styles.modalDurationBadge}>
               <Text style={styles.modalDurationText}>⏱ Duration: {course.duration}</Text>
-              <Text style={styles.durationHint}>(Years of study needed)</Text>
             </View>
 
             {/* Description Section */}
