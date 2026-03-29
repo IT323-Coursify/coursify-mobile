@@ -74,6 +74,31 @@ export default function TabsLayout() {
                 }}
             />
 
+            {/* Courses Tab */}
+            <Tabs.Screen
+                name="courses"
+                options={{
+                    tabBarLabel: ({ focused }) => (
+                        <Text
+                            style={{
+                                color: focused ? "#ffffffff" : "#f0efefff",       // change color
+                                fontWeight: focused ? "bold" : "normal",   // bold when active
+                                fontSize: focused ? 12 : 12,               // bigger when active
+                            }}>Courses</Text>
+                    ),
+                    tabBarIcon: ({ focused }) => (
+                        <Image
+                            source={
+                                focused
+                                    ? require("../../assets/courses-active.png")
+                                    : require("../../assets/courses-inactive.png")
+                            }
+                            style={{ width: 24, height: 24 }}
+                        />
+                    ),
+                }}
+            />
+
             {/* Profile Tab */}
             <Tabs.Screen
                 name="profile"
