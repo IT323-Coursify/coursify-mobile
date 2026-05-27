@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, SafeAreaView } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal} from 'react-native';
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from 'expo-router';
 
 // Programs with their courses and details - Same as web version
@@ -277,7 +278,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#4da3f5",
     paddingHorizontal: 20,
-    paddingVertical: 17,
+    paddingVertical: 12,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -286,7 +287,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: "white",
-    marginTop: 22,
   },
   headerSub: {
     fontSize: 12,

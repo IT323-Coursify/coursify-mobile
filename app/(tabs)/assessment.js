@@ -1,576 +1,650 @@
-import { useState, useEffect } from "react";
-import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  SafeAreaView, StatusBar, AsyncStorage
-} from "react-native";
+import { useState, useEffect, useCallback } from "react";
+import {View, Text, ScrollView, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator,} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAssessment } from "../../context/AssessmentContext";
-import { computeRecommendations } from "../../utils/recommendationEngine";
+import API from "../../config/api";
 
-// ── Storage key ──────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────
 const STORAGE_KEY = "coursify_assessment_progress";
 
-// ── Data ─────────────────────────────────────────────────
-const strandOptions = [
-  { value: "STEM", desc: "Science, Technology, Engineering & Mathematics" },
-  { value: "ABM", desc: "Accountancy, Business & Management" },
+const STRAND_OPTIONS = [
+  { value: "STEM",  desc: "Science, Technology, Engineering & Mathematics" },
+  { value: "ABM",   desc: "Accountancy, Business & Management" },
   { value: "HUMSS", desc: "Humanities & Social Sciences" },
-  { value: "TVL", desc: "Technical-Vocational-Livelihood" },
-  { value: "GAS", desc: "General Academic Strand" },
+  { value: "TVL",   desc: "Technical-Vocational-Livelihood" },
+  { value: "GAS",   desc: "General Academic Strand" },
 ];
 
-const riasecQuestions = [
-  { id: "q1", text: "Building or fixing things with my hands." },
-  { id: "q2", text: "Solving complex mathematical or scientific problems." },
-  { id: "q3", text: "Drawing, designing, or creating art and music." },
-  { id: "q4", text: "Helping, teaching, or counseling other people." },
-  { id: "q5", text: "Leading groups and persuading or convincing others." },
-  { id: "q6", text: "Organizing data, files, and following clear procedures." },
-  { id: "q7", text: "Working with tools, machines, or outdoor activities." },
-  { id: "q8", text: "Researching, analyzing, and investigating topics deeply." },
-  { id: "q9", text: "Expressing myself through writing, performance, or design." },
-  { id: "q10", text: "Volunteering, social work, or community service." },
-  { id: "q11", text: "Negotiating, selling, or starting new ventures." },
-  { id: "q12", text: "Working on structured tasks with clear rules and expectations." },
+const LIKERT_LABELS = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"];
+
+const SECTIONS = [
+  { key: "strand",   title: "SHS Strand",          icon: "🎓", desc: "Your academic track" },
+  { key: "riasec",   title: "RIASEC Interests",     icon: "🧭", desc: "Holland Interest Inventory" },
+  { key: "bigfive",  title: "Big Five Personality", icon: "🧠", desc: "OCEAN Personality Model" },
+  { key: "math",     title: "Math Aptitude",         icon: "📐", desc: "12 questions" },
+  { key: "science",  title: "Science Aptitude",      icon: "🔬", desc: "12 questions" },
+  { key: "english",  title: "English Aptitude",      icon: "📖", desc: "12 questions" },
+  { key: "abstract", title: "Abstract Reasoning",    icon: "🔷", desc: "12 questions" },
 ];
 
-// 8 MBTI questions — no dimension labels shown
-const mbtiQuestions = [
-  {
-    dimension: "EI", question: "Which feels more natural to you?", options: [
-      { label: "I feel more energized after spending time with a group of people.", value: "E" },
-      { label: "I feel more refreshed after spending time alone or in a quiet setting.", value: "I" },
-    ]
-  },
-  {
-    dimension: "EI", question: "When you have a problem to work through, you usually...", options: [
-      { label: "Talk it out with someone — saying it aloud helps me think.", value: "E" },
-      { label: "Reflect on it quietly by myself before sharing anything.", value: "I" },
-    ]
-  },
-  {
-    dimension: "SN", question: "When you learn something new, you prefer...", options: [
-      { label: "Step-by-step instructions with concrete, real-world examples.", value: "S" },
-      { label: "Understanding the big picture and the 'why' behind it first.", value: "N" },
-    ]
-  },
-  {
-    dimension: "SN", question: "Which statement fits you more?", options: [
-      { label: "I trust what I can see, touch, or experience directly.", value: "S" },
-      { label: "I often think about possibilities and what could be, not just what is.", value: "N" },
-    ]
-  },
-  {
-    dimension: "TF", question: "When making an important decision, you tend to...", options: [
-      { label: "Focus on the facts and what makes the most logical sense.", value: "T" },
-      { label: "Consider how the decision will affect the people involved.", value: "F" },
-    ]
-  },
-  {
-    dimension: "TF", question: "If a friend made a mistake, you would most likely...", options: [
-      { label: "Point out what went wrong and how they can fix it practically.", value: "T" },
-      { label: "Focus on how they are feeling and offer emotional support first.", value: "F" },
-    ]
-  },
-  {
-    dimension: "JP", question: "Which describes your ideal way of handling tasks?", options: [
-      { label: "I like to plan ahead, set deadlines, and finish things early.", value: "J" },
-      { label: "I prefer keeping things flexible and adapting as I go.", value: "P" },
-    ]
-  },
-  {
-    dimension: "JP", question: "How do you feel when plans suddenly change?", options: [
-      { label: "It bothers me — I prefer knowing what to expect in advance.", value: "J" },
-      { label: "I am fine with it — I actually enjoy a bit of spontaneity.", value: "P" },
-    ]
-  },
-];
+// ── Helpers ───────────────────────────────────────────────
+function getCurrentUserId(token) {
+  try {
+    if (!token) return null;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.sub ?? payload.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
-const academicQuestions = {
-  Math: [
-    { id: "m1", type: "likert", text: "I understand how to solve linear equations." },
-    { id: "m2", type: "mcq", text: "What is the value of x in: 2x + 6 = 14?", options: ["x = 3", "x = 4", "x = 5", "x = 10"] },
-    { id: "m3", type: "likert", text: "I can apply the Pythagorean theorem to solve problems." },
-    { id: "m4", type: "mcq", text: "What is 15% of 200?", options: ["25", "30", "35", "40"] },
-    { id: "m5", type: "likert", text: "I am comfortable working with fractions and decimals." },
-    { id: "m6", type: "mcq", text: "Simplify: (x² + 5x + 6) ÷ (x + 2)", options: ["x + 3", "x + 2", "x − 3", "x − 2"] },
-    { id: "m7", type: "likert", text: "I can interpret graphs and data charts accurately." },
-    { id: "m8", type: "mcq", text: "What is the area of a triangle with base 8 and height 5?", options: ["20", "40", "13", "80"] },
-    { id: "m9", type: "likert", text: "I find it easy to follow mathematical proofs." },
-    { id: "m10", type: "mcq", text: "If a square has a perimeter of 36, what is its area?", options: ["81", "72", "64", "36"] },
-  ],
-  Science: [
-    { id: "s1", type: "likert", text: "I understand the basic laws of motion (Newton's Laws)." },
-    { id: "s2", type: "mcq", text: "What is the powerhouse of the cell?", options: ["Nucleus", "Ribosome", "Mitochondria", "Vacuole"] },
-    { id: "s3", type: "likert", text: "I can explain how photosynthesis works." },
-    { id: "s4", type: "mcq", text: "What gas do plants absorb during photosynthesis?", options: ["Oxygen", "Carbon Dioxide", "Nitrogen", "Hydrogen"] },
-    { id: "s5", type: "likert", text: "I understand the difference between physical and chemical changes." },
-    { id: "s6", type: "mcq", text: "What is the atomic number of Carbon?", options: ["6", "12", "8", "14"] },
-    { id: "s7", type: "likert", text: "I am confident reading and interpreting scientific data." },
-    { id: "s8", type: "mcq", text: "What type of rock is formed from cooled lava?", options: ["Sedimentary", "Metamorphic", "Igneous", "Limestone"] },
-    { id: "s9", type: "likert", text: "I understand how ecosystems and food chains work." },
-    { id: "s10", type: "mcq", text: "Which planet is closest to the sun?", options: ["Venus", "Earth", "Mercury", "Mars"] },
-  ],
-  English: [
-    { id: "e1", type: "likert", text: "I can write a clear and organized paragraph." },
-    { id: "e2", type: "mcq", text: "Which sentence is grammatically correct?", options: ["She don't know.", "She doesn't knows.", "She doesn't know.", "She not know."] },
-    { id: "e3", type: "likert", text: "I understand literary devices like metaphors and similes." },
-    { id: "e4", type: "mcq", text: "What is the synonym of 'benevolent'?", options: ["Cruel", "Kind", "Angry", "Strict"] },
-    { id: "e5", type: "likert", text: "I can identify the main idea of a reading passage." },
-    { id: "e6", type: "mcq", text: "Which is an example of a compound sentence?", options: ["The dog ran.", "I was tired, but I finished.", "Running fast.", "Because it rained."] },
-    { id: "e7", type: "likert", text: "I am comfortable doing oral presentations in English." },
-    { id: "e8", type: "mcq", text: "What does the word 'ambiguous' mean?", options: ["Very clear", "Open to multiple interpretations", "Very loud", "Absolutely certain"] },
-    { id: "e9", type: "likert", text: "I can write persuasive essays effectively." },
-    { id: "e10", type: "mcq", text: "Which of these is a proper noun?", options: ["city", "teacher", "Manila", "building"] },
-  ],
-  Computer: [
-    { id: "c1", type: "likert", text: "I am comfortable using spreadsheet software (Excel/Sheets)." },
-    { id: "c2", type: "mcq", text: "What does CPU stand for?", options: ["Central Processing Unit", "Computer Power Unit", "Core Processing Upgrade", "Central Power Upgrade"] },
-    { id: "c3", type: "likert", text: "I understand basic programming concepts like loops and conditions." },
-    { id: "c4", type: "mcq", text: "Which of these is NOT a programming language?", options: ["Python", "HTML", "Photoshop", "JavaScript"] },
-    { id: "c5", type: "likert", text: "I can troubleshoot basic computer hardware problems." },
-    { id: "c6", type: "mcq", text: "What does 'RAM' stand for?", options: ["Random Access Memory", "Read And Memorize", "Rapid Application Module", "Runtime Array Memory"] },
-    { id: "c7", type: "likert", text: "I understand how the internet and networks work." },
-    { id: "c8", type: "mcq", text: "Which file format is used for images?", options: [".mp3", ".exe", ".png", ".docx"] },
-    { id: "c9", type: "likert", text: "I can create and format basic documents and presentations." },
-    { id: "c10", type: "mcq", text: "What is the function of an operating system?", options: ["Browse internet", "Manage hardware and software", "Edit photos", "Store files only"] },
-  ],
-  Filipino: [
-    { id: "f1", type: "likert", text: "Nakakasulat ako ng malinaw na talata sa Filipino." },
-    { id: "f2", type: "mcq", text: "Alin sa mga sumusunod ang tamang baybay?", options: ["Palengke", "Palingke", "Palenkge", "Palengque"] },
-    { id: "f3", type: "likert", text: "Naiintindihan ko ang mga akdang pampanitikan sa Filipino." },
-    { id: "f4", type: "mcq", text: "Ano ang kahulugan ng salitang 'maunawain'?", options: ["Mapagmataas", "Magalang", "Mapagpasensya", "Mapagbigay"] },
-    { id: "f5", type: "likert", text: "Kaya kong tukuyin ang paksa ng isang pahayag." },
-    { id: "f6", type: "mcq", text: "Aling pangungusap ang may tamang bantas?", options: ["Kumain ka na ba", "Kumain ka na ba?", "Kumain ka na ba!", "Kumain ka na ba,"] },
-    { id: "f7", type: "likert", text: "Komportable akong magsalita sa harap ng klase sa Filipino." },
-    { id: "f8", type: "mcq", text: "Ano ang uri ng pangungusap na nagpapahayag ng utos?", options: ["Pasalaysay", "Patanong", "Padamdam", "Pautos"] },
-    { id: "f9", type: "likert", text: "Naiisulat ko ang aking mga nararamdaman sa pamamagitan ng tula." },
-    { id: "f10", type: "mcq", text: "Sino ang itinuturing na 'Ama ng Wikang Pambansa'?", options: ["Jose Rizal", "Lope K. Santos", "Manuel Quezon", "Andres Bonifacio"] },
-  ],
-  Humanities: [
-    { id: "h1", type: "likert", text: "I understand the major events of Philippine history." },
-    { id: "h2", type: "mcq", text: "What document ended Spanish rule in the Philippines?", options: ["Treaty of Paris", "Malolos Constitution", "Proclamation of Independence", "KKK Manifesto"] },
-    { id: "h3", type: "likert", text: "I can analyze how historical events affect present society." },
-    { id: "h4", type: "mcq", text: "Who wrote the Noli Me Tangere?", options: ["Andres Bonifacio", "Emilio Aguinaldo", "Jose Rizal", "Marcelo del Pilar"] },
-    { id: "h5", type: "likert", text: "I understand basic concepts in economics and government." },
-    { id: "h6", type: "mcq", text: "What type of government does the Philippines follow?", options: ["Monarchy", "Federal Republic", "Unitary Presidential Republic", "Parliamentary"] },
-    { id: "h7", type: "likert", text: "I can distinguish between different cultural and social perspectives." },
-    { id: "h8", type: "mcq", text: "What does 'GDP' stand for?", options: ["General Daily Production", "Gross Domestic Product", "Government Development Plan", "Global Demand Price"] },
-    { id: "h9", type: "likert", text: "I enjoy reading about social issues and current events." },
-    { id: "h10", type: "mcq", text: "Which branch makes the laws in the Philippines?", options: ["Executive", "Judicial", "Legislative", "Military"] },
-  ],
-};
+async function loadSaved(currentUserId) {
+  try {
+    const s = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!s) return {};
+    const parsed = JSON.parse(s);
+    if (parsed.userId && parsed.userId !== currentUserId) {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      return {};
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
 
-const SUBJECTS = Object.keys(academicQuestions);
-const LIKERT_OPTIONS = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"];
-const SECTIONS = ["strand", "riasec", "mbti", "academic"];
-
-const sectionInfo = {
-  strand: { title: "SHS Strand", icon: "🎓", desc: "Select your academic track" },
-  riasec: { title: "RIASEC Interests", icon: "🧭", desc: "Holland Interest Inventory — 12 items" },
-  mbti: { title: "Personality Indicator", icon: "🧠", desc: "8 situational questions" },
-  academic: { title: "Academic Assessment", icon: "📚", desc: "10 questions × 6 subjects" },
-};
-
-function sectionComplete(section, data) {
-  if (section === "strand") return !!data.strand;
-  if (section === "riasec") return Object.keys(data.riasecAnswers || {}).length === 12;
-  if (section === "mbti") return Object.keys(data.mbtiAnswers || {}).length === 8;
-  if (section === "academic") return SUBJECTS.every(s => Object.keys((data.academicAnswers || {})[s] || {}).length === 10);
+function isSectionComplete(key, questions, answers) {
+  if (key === "strand") return !!answers.strand;
+  if (key === "riasec") {
+    return questions?.riasec &&
+      Object.keys(answers.riasecAnswers || {}).length === questions.riasec.length;
+  }
+  if (key === "bigfive") {
+    return questions?.bigfive &&
+      Object.keys(answers.bigfiveAnswers || {}).length === questions.bigfive.length;
+  }
+  if (["math", "science", "english", "abstract"].includes(key)) {
+    const qs = questions?.aptitude?.[key];
+    return qs &&
+      Object.keys((answers.aptitudeAnswers || {})[key] || {}).length === qs.length;
+  }
   return false;
 }
 
-// ── Star Rating ──────────────────────────────────────────
-function StarRating({ value, onChange }) {
+// ── Section Progress Bar ──────────────────────────────────
+function SectionProgress({ current, total }) {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
   return (
-    <View style={styles.starRow}>
-      {[1, 2, 3, 4, 5].map(val => (
-        <TouchableOpacity key={val} onPress={() => onChange(val)} style={styles.starBtn}>
-          <Text style={[styles.star, value >= val && styles.starActive]}>★</Text>
-        </TouchableOpacity>
-      ))}
+    <View style={s.sectionProgressRow}>
+      <View style={s.sectionProgressTrack}>
+        <View style={[s.sectionProgressFill, { width: `${pct}%` }]} />
+      </View>
+      <Text style={s.sectionProgressLabel}>{current}/{total}</Text>
     </View>
   );
 }
 
-// ── Main Screen ──────────────────────────────────────────
+// ── Strand Section ────────────────────────────────────────
+function StrandSection({ strand, setStrand, onDone }) {
+  return (
+    <View>
+      <Text style={s.stepSubtitle}>Select your Senior High School strand.</Text>
+      {STRAND_OPTIONS.map((opt) => (
+        <TouchableOpacity
+          key={opt.value}
+          style={[s.strandBtn, strand === opt.value && s.strandBtnSelected]}
+          onPress={() => setStrand(opt.value)}
+        >
+          <Text style={[s.strandName, strand === opt.value && s.strandNameSelected]}>
+            {opt.value}
+          </Text>
+          <Text style={[s.strandDesc, strand === opt.value && s.strandDescSelected]}>
+            {opt.desc}
+          </Text>
+        </TouchableOpacity>
+      ))}
+      {strand && (
+        <TouchableOpacity style={s.saveSectionBtn} onPress={onDone}>
+          <Text style={s.saveSectionBtnText}>Save & Close ✓</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ── Likert Section (RIASEC + Big Five) ───────────────────
+function LikertSection({ questions, answers, setAnswers, subtitle, onDone, done }) {
+  const answered = Object.keys(answers).length;
+  const total    = questions.length;
+
+  return (
+    <View>
+      <Text style={s.stepSubtitle}>{subtitle}</Text>
+
+      {/* Legend */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.likertLegendScroll}>
+        {LIKERT_LABELS.map((label, i) => (
+          <View key={i} style={s.likertLegendItem}>
+            <Text style={s.likertLegendNum}>{i + 1}</Text>
+            <Text style={s.likertLegendLabel}>{label}</Text>
+          </View>
+        ))}
+      </ScrollView>
+
+      <SectionProgress current={answered} total={total} />
+
+      {questions.map((q, i) => {
+        const current = answers[q._id] || 0;
+        return (
+          <View key={q._id} style={[s.likertRow, current > 0 && s.likertRowAnswered]}>
+            <Text style={s.likertNum}>{i + 1}</Text>
+            <Text style={s.likertText}>{q.text}</Text>
+            <View style={s.likertScale}>
+              {[1, 2, 3, 4, 5].map((val) => (
+                <TouchableOpacity
+                  key={val}
+                  style={[s.likertBtn, current === val && s.likertBtnActive]}
+                  onPress={() => setAnswers(prev => ({ ...prev, [q._id]: val }))}
+                >
+                  <Text style={[s.likertBtnText, current === val && s.likertBtnTextActive]}>
+                    {val}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {current > 0 && (
+              <Text style={s.likertSelectedLabel}>{LIKERT_LABELS[current - 1]}</Text>
+            )}
+          </View>
+        );
+      })}
+
+      {done && (
+        <TouchableOpacity style={s.saveSectionBtn} onPress={onDone}>
+          <Text style={s.saveSectionBtnText}>Save & Close ✓</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ── Aptitude Section ──────────────────────────────────────
+function AptitudeSection({ subject, questions, answers, setAnswer, onDone, done }) {
+  const answered = Object.keys(answers).length;
+  const total    = questions.length;
+
+  return (
+    <View>
+      <Text style={s.stepSubtitle}>Choose the best answer for each question.</Text>
+      <SectionProgress current={answered} total={total} />
+
+      {questions.map((q, i) => {
+        const selected = answers[q._id];
+        return (
+          <View key={q._id} style={[s.academicQ, selected && s.academicQAnswered]}>
+            <Text style={s.academicQText}>
+              <Text style={s.academicQNum}>{i + 1}. </Text>{q.text}
+            </Text>
+            <View style={s.mcqOptions}>
+              {(q.options || []).map((opt) => {
+                const isSelected = selected === opt.label;
+                return (
+                  <TouchableOpacity
+                    key={opt.label}
+                    style={[s.mcqOpt, isSelected && s.mcqOptSelected]}
+                    onPress={() => setAnswer(q._id, opt.label)}
+                  >
+                    <Text style={[s.mcqLabel, isSelected && s.mcqLabelSelected]}>
+                      {opt.label}.
+                    </Text>
+                    <Text style={[s.mcqValue, isSelected && s.mcqValueSelected]}>
+                      {opt.value}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        );
+      })}
+
+      {done && (
+        <TouchableOpacity style={s.saveSectionBtn} onPress={onDone}>
+          <Text style={s.saveSectionBtnText}>Save & Close ✓</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ── Main Assessment Screen ────────────────────────────────
 export default function Assessment() {
   const router = useRouter();
-  const { setAssessmentAnswers, setRecommendations } = useAssessment();
+  const {
+    questions, setQuestions,
+    questionsLoading, setQuestionsLoading,
+    questionsError,   setQuestionsError,
+    setAssessmentAnswers, setResultId,
+  } = useAssessment();
 
-  const [openSection, setOpenSection] = useState(null);
-  const [strand, setStrand] = useState(null);
-  const [riasecAnswers, setRiasecAnswers] = useState({});
-  const [mbtiAnswers, setMbtiAnswers] = useState({});
-  const [academicAnswers, setAcademicAnswers] = useState({});
-  const [activeSubject, setActiveSubject] = useState(SUBJECTS[0]);
-  const [submitted, setSubmitted] = useState(false);
+  const [token,           setToken]           = useState(null);
+  const [currentUserId,   setCurrentUserId]   = useState(null);
+  const [strand,          setStrand]          = useState(null);
+  const [riasecAnswers,   setRiasecAnswers]   = useState({});
+  const [bigfiveAnswers,  setBigfiveAnswers]  = useState({});
+  const [aptitudeAnswers, setAptitudeAnswers] = useState({});
+  const [openSection,     setOpenSection]     = useState(null);
+  const [submitted,       setSubmitted]       = useState(false);
+  const [submitting,      setSubmitting]      = useState(false);
+  const [submitError,     setSubmitError]     = useState(null);
 
-  const currentData = { strand, riasecAnswers, mbtiAnswers, academicAnswers };
-  const completedCount = SECTIONS.filter(s => sectionComplete(s, currentData)).length;
-  const progress = completedCount / SECTIONS.length;
-  const allComplete = completedCount === SECTIONS.length;
+  // Load token and saved draft
+  useEffect(() => {
+    (async () => {
+      const t = await AsyncStorage.getItem("token");
+      if (!t) { router.replace("/"); return; }
+      setToken(t);
 
-  const setAcademicAnswer = (subject, qid, value) => {
-    setAcademicAnswers(prev => ({ ...prev, [subject]: { ...(prev[subject] || {}), [qid]: value } }));
+      const uid = getCurrentUserId(t);
+      setCurrentUserId(uid);
+
+      const saved = await loadSaved(uid);
+      if (saved.strand)          setStrand(saved.strand);
+      if (saved.riasecAnswers)   setRiasecAnswers(saved.riasecAnswers);
+      if (saved.bigfiveAnswers)  setBigfiveAnswers(saved.bigfiveAnswers);
+      if (saved.aptitudeAnswers) setAptitudeAnswers(saved.aptitudeAnswers);
+    })();
+  }, []);
+
+  // Auto-save progress
+  useEffect(() => {
+    if (!currentUserId) return;
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
+      userId: currentUserId,
+      strand, riasecAnswers, bigfiveAnswers, aptitudeAnswers,
+    }));
+  }, [currentUserId, strand, riasecAnswers, bigfiveAnswers, aptitudeAnswers]);
+
+  // Fetch questions
+  const fetchQuestions = useCallback(async () => {
+    const t = await AsyncStorage.getItem("token");
+    if (!t) return;
+    try {
+      setQuestionsLoading(true);
+      setQuestionsError(null);
+      const res  = await fetch(`${API}/api/assessment/questions`, {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to load questions.");
+      setQuestions(data);
+
+      // Scrub stale answer keys
+      const freshRiasecIds  = new Set(data.riasec.map(q => q._id));
+      const freshBigfiveIds = new Set(data.bigfive.map(q => q._id));
+      const freshAptIds = {
+        math:     new Set(data.aptitude.math.map(q => q._id)),
+        science:  new Set(data.aptitude.science.map(q => q._id)),
+        english:  new Set(data.aptitude.english.map(q => q._id)),
+        abstract: new Set(data.aptitude.abstract.map(q => q._id)),
+      };
+      setRiasecAnswers(prev =>
+        Object.fromEntries(Object.entries(prev).filter(([id]) => freshRiasecIds.has(id)))
+      );
+      setBigfiveAnswers(prev =>
+        Object.fromEntries(Object.entries(prev).filter(([id]) => freshBigfiveIds.has(id)))
+      );
+      setAptitudeAnswers(prev => {
+        const cleaned = {};
+        for (const subj of ["math", "science", "english", "abstract"]) {
+          cleaned[subj] = Object.fromEntries(
+            Object.entries(prev[subj] || {}).filter(([id]) => freshAptIds[subj].has(id))
+          );
+        }
+        return cleaned;
+      });
+    } catch (err) {
+      setQuestionsError(err.message);
+    } finally {
+      setQuestionsLoading(false);
+    }
+  }, [setQuestions, setQuestionsLoading, setQuestionsError]);
+
+  useEffect(() => {
+    fetchQuestions();
+  }, []);
+
+  // Progress
+  const answersObj = { strand, riasecAnswers, bigfiveAnswers, aptitudeAnswers };
+  const completedCount = SECTIONS.filter(sec => isSectionComplete(sec.key, questions, answersObj)).length;
+  const overallPct     = Math.round((completedCount / SECTIONS.length) * 100);
+  const allComplete    = completedCount === SECTIONS.length;
+
+  const setAptitudeAnswer = (subject, qid, value) => {
+    setAptitudeAnswers(prev => ({
+      ...prev,
+      [subject]: { ...(prev[subject] || {}), [qid]: value },
+    }));
   };
 
-  const handleSubmit = () => {
-    const answers = { strand, riasecAnswers, mbtiAnswers, academicAnswers };
-    const results = computeRecommendations(answers);
-    setAssessmentAnswers(answers);
-    setRecommendations(results);
-    setSubmitted(true);
+  // Submit
+  const handleSubmit = async () => {
+    const t = await AsyncStorage.getItem("token");
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const flatAptitudeAnswers = Object.values(aptitudeAnswers).reduce(
+        (acc, subjectAnswers) => ({ ...acc, ...subjectAnswers }), {}
+      );
+      const res = await fetch(`${API}/api/assessment/submit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${t}`,
+        },
+        body: JSON.stringify({
+          strand,
+          riasec_answers:   riasecAnswers,
+          bigfive_answers:  bigfiveAnswers,
+          aptitude_answers: flatAptitudeAnswers,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Submission failed.");
+      setAssessmentAnswers({ strand, riasecAnswers, bigfiveAnswers, aptitudeAnswers });
+      setResultId(data.result_id);
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      setSubmitted(true);
+    } catch (err) {
+      setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
+  // ── Submitted screen ──
   if (submitted) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.doneContainer}>
-          <Text style={styles.doneIcon}>🎓</Text>
-          <Text style={styles.doneTitle}>Assessment Complete!</Text>
-          <Text style={styles.doneSub}>Your personalized recommendations are ready.</Text>
-          <TouchableOpacity
-            style={styles.doneBtn}
-            onPress={() => router.replace("/(tabs)/dashboard")}
-          >
-            <Text style={styles.doneBtnText}>View My Recommendations →</Text>
+      <SafeAreaView style={s.safe}>
+        <View style={s.doneContainer}>
+          <Text style={s.doneIcon}>🎓</Text>
+          <Text style={s.doneTitle}>Assessment Complete!</Text>
+          <Text style={s.doneSub}>
+            Your answers have been saved. Course recommendations will be generated soon.
+          </Text>
+          <TouchableOpacity style={s.doneBtn} onPress={() => router.replace("/(tabs)/dashboard")}>
+            <Text style={s.doneBtnText}>Back to Dashboard →</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
+  // ── Loading questions ──
+  if (questionsLoading) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centeredBox}>
+          <ActivityIndicator color="#4da3f5" size="large" />
+          <Text style={s.loadingText}>Loading your assessment questions…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Error loading questions ──
+  if (questionsError) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centeredBox}>
+          <Text style={s.errorText}>⚠️ {questionsError}</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={fetchQuestions}>
+            <Text style={s.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Main render ──
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={s.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#4da3f5" />
 
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.push("/(tabs)/dashboard")} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← Dashboard</Text>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.push("/(tabs)/dashboard")} style={s.backBtn}>
+          <Text style={s.backBtnText}>← Dashboard</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Assessment</Text>
-        <View style={{ width: 80 }} />
+        <Text style={s.headerTitle}>Assessment</Text>
+        <View style={{ width: 90 }} />
       </View>
 
-      {/* Progress */}
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+      {/* Overall progress */}
+      <View style={s.overallProgressBar}>
+        <View style={[s.overallProgressFill, { width: `${overallPct}%` }]} />
       </View>
-      <Text style={styles.progressLabel}>{completedCount}/{SECTIONS.length} sections complete</Text>
+      <Text style={s.overallProgressLabel}>{completedCount}/{SECTIONS.length} sections complete</Text>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
 
-        {SECTIONS.map(section => {
-          const done = sectionComplete(section, currentData);
-          const isOpen = openSection === section;
-          const info = sectionInfo[section];
+        {SECTIONS.map((section) => {
+          const done   = isSectionComplete(section.key, questions, answersObj);
+          const isOpen = openSection === section.key;
 
           return (
-            <View key={section} style={[styles.sectionCard, done && styles.sectionCardDone, isOpen && styles.sectionCardOpen]}>
-
-              {/* Section Header */}
+            <View
+              key={section.key}
+              style={[s.sectionCard, done && s.sectionCardDone, isOpen && s.sectionCardOpen]}
+            >
+              {/* Section header */}
               <TouchableOpacity
-                style={styles.sectionHeader}
-                onPress={() => setOpenSection(isOpen ? null : section)}
+                style={s.sectionHeader}
+                onPress={() => setOpenSection(isOpen ? null : section.key)}
               >
-                <View style={styles.sectionLeft}>
-                  <View style={styles.sectionIconBox}>
-                    <Text style={styles.sectionIconText}>{info.icon}</Text>
+                <View style={s.sectionLeft}>
+                  <View style={s.sectionIconBox}>
+                    <Text style={s.sectionIconText}>{section.icon}</Text>
                   </View>
-                  <View>
-                    <Text style={styles.sectionTitle}>{info.title}</Text>
-                    <Text style={styles.sectionDesc}>{info.desc}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.sectionTitle}>{section.title}</Text>
+                    <Text style={s.sectionDesc}>{section.desc}</Text>
                   </View>
                 </View>
-                <View style={styles.sectionRight}>
-                  <View style={done ? styles.doneBadge : styles.pendingBadge}>
-                    <Text style={done ? styles.doneBadgeText : styles.pendingBadgeText}>
+                <View style={s.sectionRight}>
+                  <View style={done ? s.doneBadge : s.pendingBadge}>
+                    <Text style={done ? s.doneBadgeText : s.pendingBadgeText}>
                       {done ? "✓ Done" : "Pending"}
                     </Text>
                   </View>
-                  <Text style={styles.chevron}>{isOpen ? "▲" : "▼"}</Text>
+                  <Text style={s.chevron}>{isOpen ? "▲" : "▼"}</Text>
                 </View>
               </TouchableOpacity>
 
-              {/* Section Body */}
+              {/* Section body */}
               {isOpen && (
-                <View style={styles.sectionBody}>
+                <View style={s.sectionBody}>
 
-                  {/* ── STRAND ── */}
-                  {section === "strand" && (
-                    <View>
-                      <Text style={styles.sectionSubtitle}>Select your Senior High School strand.</Text>
-                      {strandOptions.map(s => (
-                        <TouchableOpacity key={s.value}
-                          style={[styles.strandBtn, strand === s.value && styles.strandBtnSelected]}
-                          onPress={() => setStrand(s.value)}
-                        >
-                          <Text style={[styles.strandName, strand === s.value && styles.strandNameSelected]}>{s.value}</Text>
-                          <Text style={[styles.strandDesc, strand === s.value && styles.strandDescSelected]}>{s.desc}</Text>
-                        </TouchableOpacity>
-                      ))}
-                      {strand && <TouchableOpacity style={styles.saveSectionBtn} onPress={() => setOpenSection(null)}>
-                        <Text style={styles.saveSectionBtnText}>Save & Close ✓</Text>
-                      </TouchableOpacity>}
-                    </View>
+                  {section.key === "strand" && (
+                    <StrandSection
+                      strand={strand}
+                      setStrand={setStrand}
+                      onDone={() => setOpenSection(null)}
+                    />
                   )}
 
-                  {/* ── RIASEC ── */}
-                  {section === "riasec" && (
-                    <View>
-                      <Text style={styles.sectionSubtitle}>Rate how much each activity interests you — 1 (not at all) to 5 (very much).</Text>
-                      {riasecQuestions.map((q, i) => (
-                        <View key={q.id} style={styles.riasecRow}>
-                          <View style={styles.riasecTop}>
-                            <Text style={styles.riasecNum}>{i + 1}</Text>
-                            <Text style={styles.riasecText}>{q.text}</Text>
-                          </View>
-                          <StarRating
-                            value={riasecAnswers[q.id] || 0}
-                            onChange={val => setRiasecAnswers({ ...riasecAnswers, [q.id]: val })}
-                          />
-                        </View>
-                      ))}
-                      {sectionComplete("riasec", currentData) && (
-                        <TouchableOpacity style={styles.saveSectionBtn} onPress={() => setOpenSection(null)}>
-                          <Text style={styles.saveSectionBtnText}>Save & Close ✓</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
+                  {section.key === "riasec" && questions?.riasec && (
+                    <LikertSection
+                      questions={questions.riasec}
+                      answers={riasecAnswers}
+                      setAnswers={setRiasecAnswers}
+                      subtitle="Rate how much each activity interests you."
+                      onDone={() => setOpenSection(null)}
+                      done={done}
+                    />
                   )}
 
-                  {/* ── MBTI ── */}
-                  {section === "mbti" && (
-                    <View>
-                      <Text style={styles.sectionSubtitle}>Choose the option that feels most like you for each situation.</Text>
-                      {mbtiQuestions.map((q, i) => (
-                        <View key={i} style={styles.mbtiBlock}>
-                          <Text style={styles.mbtiQuestion}>{q.question}</Text>
-                          {q.options.map(opt => (
-                            <TouchableOpacity key={opt.value}
-                              style={[styles.mbtiOpt, mbtiAnswers[i] === opt.value && styles.mbtiOptSelected]}
-                              onPress={() => setMbtiAnswers({ ...mbtiAnswers, [i]: opt.value })}
-                            >
-                              <Text style={[styles.mbtiLabel, mbtiAnswers[i] === opt.value && styles.mbtiLabelSelected]}>
-                                {opt.label}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      ))}
-                      {sectionComplete("mbti", currentData) && (
-                        <TouchableOpacity style={styles.saveSectionBtn} onPress={() => setOpenSection(null)}>
-                          <Text style={styles.saveSectionBtnText}>Save & Close ✓</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
+                  {section.key === "bigfive" && questions?.bigfive && (
+                    <LikertSection
+                      questions={questions.bigfive}
+                      answers={bigfiveAnswers}
+                      setAnswers={setBigfiveAnswers}
+                      subtitle="Rate how accurately each statement describes you."
+                      onDone={() => setOpenSection(null)}
+                      done={done}
+                    />
                   )}
 
-                  {/* ── ACADEMIC ── */}
-                  {section === "academic" && (
-                    <View>
-                      <Text style={styles.sectionSubtitle}>Answer 10 questions per subject. Tap a subject to switch.</Text>
-
-                      {/* Subject Tabs */}
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.subjectTabsScroll}>
-                        {SUBJECTS.map(sub => {
-                          const answered = Object.keys((academicAnswers[sub] || {})).length;
-                          const subDone = answered === 10;
-                          return (
-                            <TouchableOpacity key={sub}
-                              style={[styles.subjectTab, activeSubject === sub && styles.subjectTabActive, subDone && styles.subjectTabDone]}
-                              onPress={() => setActiveSubject(sub)}
-                            >
-                              <Text style={[styles.subjectTabText, activeSubject === sub && styles.subjectTabTextActive, subDone && styles.subjectTabTextDone]}>
-                                {subDone ? "✓ " : ""}{sub}
-                              </Text>
-                              <Text style={[styles.subjectTabCount, subDone && { color: "#15803d" }]}>{answered}/10</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-
-                      {/* Questions */}
-                      {academicQuestions[activeSubject].map((q, i) => {
-                        const answered = (academicAnswers[activeSubject] || {})[q.id];
-                        return (
-                          <View key={q.id} style={[styles.academicQ, answered !== undefined && styles.academicQAnswered]}>
-                            <Text style={styles.academicQText}>
-                              <Text style={styles.academicQNum}>{i + 1}. </Text>{q.text}
-                            </Text>
-
-                            {q.type === "mcq" && (
-                              <View style={styles.mcqOptions}>
-                                {q.options.map(opt => (
-                                  <TouchableOpacity key={opt}
-                                    style={[styles.mcqOpt, answered === opt && styles.mcqOptSelected]}
-                                    onPress={() => setAcademicAnswer(activeSubject, q.id, opt)}
-                                  >
-                                    <Text style={[styles.mcqOptText, answered === opt && styles.mcqOptTextSelected]}>{opt}</Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                            )}
-
-                            {q.type === "likert" && (
-                              <View style={styles.mcqOptions}>
-                                {LIKERT_OPTIONS.map((opt, li) => (
-                                  <TouchableOpacity
-                                  
-                                    key={li}
-                                    style={[styles.mcqOpt, answered === opt && styles.mcqOptSelected]}
-                                    onPress={() => setAcademicAnswer(activeSubject, q.id, opt)}
-                                  >
-                                    <Text style={[styles.mcqOptText, answered === opt && styles.mcqOptTextSelected]}>
-                                      {opt}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                            )}
-                          </View>
-                        );
-                      })}
-
-                      {sectionComplete("academic", currentData) && (
-                        <TouchableOpacity style={styles.saveSectionBtn} onPress={() => setOpenSection(null)}>
-                          <Text style={styles.saveSectionBtnText}>Save & Close ✓</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
+                  {["math", "science", "english", "abstract"].includes(section.key) &&
+                    questions?.aptitude?.[section.key] && (
+                    <AptitudeSection
+                      subject={section.key}
+                      questions={questions.aptitude[section.key]}
+                      answers={(aptitudeAnswers[section.key] || {})}
+                      setAnswer={(qid, val) => setAptitudeAnswer(section.key, qid, val)}
+                      onDone={() => setOpenSection(null)}
+                      done={done}
+                    />
                   )}
+
                 </View>
               )}
             </View>
           );
         })}
 
-        {/* Submit */}
-        <View style={styles.submitArea}>
+        {/* Submit area */}
+        <View style={s.submitArea}>
+          {submitError && <Text style={s.submitError}>⚠️ {submitError}</Text>}
           {allComplete ? (
-            <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-              <Text style={styles.submitBtnText}>🎯 Generate My Recommendations</Text>
+            <TouchableOpacity style={s.submitBtn} onPress={handleSubmit} disabled={submitting}>
+              <Text style={s.submitBtnText}>
+                {submitting ? "Submitting…" : "🎯 Submit Assessment"}
+              </Text>
             </TouchableOpacity>
           ) : (
-            <Text style={styles.submitHint}>Complete all 4 sections to generate recommendations.</Text>
+            <Text style={s.submitHint}>
+              Complete all {SECTIONS.length} sections above to submit.
+            </Text>
           )}
         </View>
+
         <View style={{ height: 30 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#FFFCF3" },
+// ── Styles ────────────────────────────────────────────────
+const s = StyleSheet.create({
+  safe:    { flex: 1, backgroundColor: "#FFFCF3" },
 
   // Header
-  header: { backgroundColor: "#4da3f5", flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 27 },
-  backBtn: { width: 90 },
-  backBtnText: { color: "white", fontSize: 13, fontWeight: "600", marginTop: 20 },
-  headerTitle: { color: "white", fontSize: 18, fontWeight: "700", marginTop: 20 },
+  header: { backgroundColor: "#4da3f5", flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 14 },
+  backBtn:     { width: 90 },
+  backBtnText: { color: "white", fontSize: 13, fontWeight: "600"},
+  headerTitle: { color: "white", fontSize: 18, fontWeight: "700"},
 
-  // Progress
-  progressBar: { height: 5, backgroundColor: "#e2e8f0", marginHorizontal: 0 },
-  progressFill: { height: "100%", backgroundColor: "#2bbbad" },
-  progressLabel: { fontSize: 11, color: "#94a3b8", fontWeight: "600", textAlign: "right", paddingHorizontal: 16, paddingVertical: 6 },
+  // Overall progress
+  overallProgressBar:   { height: 5, backgroundColor: "#e2e8f0" },
+  overallProgressFill:  { height: "100%", backgroundColor: "#2bbbad" },
+  overallProgressLabel: { fontSize: 11, color: "#94a3b8", fontWeight: "600", textAlign: "right", paddingHorizontal: 16, paddingVertical: 6 },
+
+  // Loading / error / centered
+  centeredBox:  { flex: 1, justifyContent: "center", alignItems: "center", gap: 16, padding: 40 },
+  loadingText:  { fontSize: 13, color: "#94a3b8", textAlign: "center" },
+  errorText:    { fontSize: 13, color: "#be123c", textAlign: "center" },
+  retryBtn:     { backgroundColor: "#4da3f5", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  retryBtnText: { color: "white", fontWeight: "700", fontSize: 14 },
 
   // Scroll
-  scroll: { flex: 1 },
+  scroll:        { flex: 1 },
   scrollContent: { padding: 16 },
 
-  // Section Cards
-  sectionCard: { backgroundColor: "white", borderRadius: 16, marginBottom: 12, borderWidth: 2, borderColor: "#e2e8f0", overflow: "hidden" },
+  // Section cards
+  sectionCard:     { backgroundColor: "white", borderRadius: 16, marginBottom: 12, borderWidth: 2, borderColor: "#e2e8f0", overflow: "hidden" },
   sectionCardDone: { borderColor: "#86efac" },
   sectionCardOpen: { borderColor: "#4da3f5" },
-
-  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 },
-  sectionLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
-  sectionIconBox: { width: 40, height: 40, backgroundColor: "#f1f5f9", borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  sectionHeader:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 },
+  sectionLeft:     { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  sectionIconBox:  { width: 40, height: 40, backgroundColor: "#f1f5f9", borderRadius: 10, justifyContent: "center", alignItems: "center" },
   sectionIconText: { fontSize: 20 },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#1e293b" },
-  sectionDesc: { fontSize: 11, color: "#94a3b8", marginTop: 2 },
-  sectionRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sectionTitle:    { fontSize: 14, fontWeight: "700", color: "#1e293b" },
+  sectionDesc:     { fontSize: 11, color: "#94a3b8", marginTop: 2 },
+  sectionRight:    { flexDirection: "row", alignItems: "center", gap: 8 },
+  doneBadge:       { backgroundColor: "#d4edda", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
+  doneBadgeText:   { fontSize: 11, fontWeight: "700", color: "#155724" },
+  pendingBadge:    { backgroundColor: "#f1f5f9", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
+  pendingBadgeText:{ fontSize: 11, fontWeight: "600", color: "#94a3b8" },
+  chevron:         { fontSize: 10, color: "#94a3b8" },
+  sectionBody:     { paddingHorizontal: 16, paddingBottom: 16, borderTopWidth: 1, borderTopColor: "#f1f5f9" },
 
-  doneBadge: { backgroundColor: "#d4edda", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  doneBadgeText: { fontSize: 11, fontWeight: "700", color: "#155724" },
-  pendingBadge: { backgroundColor: "#f1f5f9", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  pendingBadgeText: { fontSize: 11, fontWeight: "600", color: "#94a3b8" },
-  chevron: { fontSize: 10, color: "#94a3b8" },
-
-  sectionBody: { paddingHorizontal: 16, paddingBottom: 16, borderTopWidth: 1, borderTopColor: "#f1f5f9" },
-  sectionSubtitle: { fontSize: 12, color: "#64748b", marginTop: 14, marginBottom: 16, lineHeight: 18 },
+  // Step subtitle
+  stepSubtitle: { fontSize: 12, color: "#64748b", marginTop: 14, marginBottom: 16, lineHeight: 18 },
 
   // Strand
-  strandBtn: { borderWidth: 2, borderColor: "#e2e8f0", borderRadius: 12, padding: 14, marginBottom: 8, backgroundColor: "white" },
-  strandBtnSelected: { borderColor: "#2bbbad", backgroundColor: "#f0fdf4" },
-  strandName: { fontSize: 15, fontWeight: "700", color: "#1e293b", marginBottom: 2 },
+  strandBtn:          { borderWidth: 2, borderColor: "#e2e8f0", borderRadius: 12, padding: 14, marginBottom: 8, backgroundColor: "white" },
+  strandBtnSelected:  { borderColor: "#2bbbad", backgroundColor: "#f0fdf4" },
+  strandName:         { fontSize: 15, fontWeight: "700", color: "#1e293b", marginBottom: 2 },
   strandNameSelected: { color: "#1a7a74" },
-  strandDesc: { fontSize: 11, color: "#94a3b8" },
+  strandDesc:         { fontSize: 11, color: "#94a3b8" },
   strandDescSelected: { color: "#2bbbad" },
 
-  // RIASEC
-  riasecRow: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, marginBottom: 8 },
-  riasecTop: { flexDirection: "row", gap: 8, marginBottom: 10 },
-  riasecNum: { fontSize: 10, fontWeight: "700", color: "#94a3b8", minWidth: 18, marginTop: 2 },
-  riasecText: { flex: 1, fontSize: 12, color: "#374151", lineHeight: 18 },
-  starRow: { flexDirection: "row", gap: 4 },
-  starBtn: { padding: 2 },
-  star: { fontSize: 22, color: "#d1d5db" },
-  starActive: { color: "#FBB217" },
+  // Likert legend
+  likertLegendScroll: { marginBottom: 12 },
+  likertLegendItem:   { alignItems: "center", marginRight: 16 },
+  likertLegendNum:    { fontSize: 13, fontWeight: "700", color: "#4da3f5", marginBottom: 2 },
+  likertLegendLabel:  { fontSize: 10, color: "#94a3b8" },
 
-  // MBTI — no letter badges
-  mbtiBlock: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 14, marginBottom: 12 },
-  mbtiQuestion: { fontSize: 13, fontWeight: "600", color: "#1e293b", marginBottom: 10, lineHeight: 18 },
-  mbtiOpt: { borderWidth: 2, borderColor: "#e2e8f0", borderRadius: 10, padding: 12, marginBottom: 8, backgroundColor: "white" },
-  mbtiOptSelected: { borderColor: "#2bbbad", backgroundColor: "#f0fdf4" },
-  mbtiLabel: { fontSize: 12, color: "#374151", lineHeight: 18 },
-  mbtiLabelSelected: { color: "#1a7a74", fontWeight: "600" },
+  // Section progress
+  sectionProgressRow:   { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  sectionProgressTrack: { flex: 1, height: 5, backgroundColor: "#e2e8f0", borderRadius: 3, overflow: "hidden" },
+  sectionProgressFill:  { height: "100%", backgroundColor: "#2bbbad" },
+  sectionProgressLabel: { fontSize: 11, color: "#94a3b8", fontWeight: "600" },
 
-  // Academic
-  subjectTabsScroll: { marginBottom: 16 },
-  subjectTab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 2, borderColor: "#e2e8f0", marginRight: 8, backgroundColor: "white", alignItems: "center" },
-  subjectTabActive: { borderColor: "#4da3f5", backgroundColor: "#eff6ff" },
-  subjectTabDone: { borderColor: "#86efac", backgroundColor: "#f0fdf4" },
-  subjectTabText: { fontSize: 12, fontWeight: "600", color: "#64748b" },
-  subjectTabTextActive: { color: "#4da3f5" },
-  subjectTabTextDone: { color: "#15803d" },
-  subjectTabCount: { fontSize: 9, fontWeight: "700", color: "#94a3b8", marginTop: 2 },
+  // Likert rows
+  likertRow:         { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, marginBottom: 8 },
+  likertRowAnswered: { borderWidth: 1.5, borderColor: "#86efac" },
+  likertNum:         { fontSize: 10, fontWeight: "700", color: "#94a3b8", marginBottom: 4 },
+  likertText:        { fontSize: 12, color: "#374151", lineHeight: 18, marginBottom: 10 },
+  likertScale:       { flexDirection: "row", gap: 6 },
+  likertBtn:         { width: 36, height: 36, borderRadius: 8, backgroundColor: "white", borderWidth: 1.5, borderColor: "#e2e8f0", justifyContent: "center", alignItems: "center" },
+  likertBtnActive:   { backgroundColor: "#4da3f5", borderColor: "#4da3f5" },
+  likertBtnText:     { fontSize: 13, fontWeight: "700", color: "#94a3b8" },
+  likertBtnTextActive:{ color: "white" },
+  likertSelectedLabel:{ fontSize: 10, color: "#2bbbad", fontWeight: "600", marginTop: 6 },
 
-  academicQ: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 2, borderColor: "transparent" },
-  academicQAnswered: { borderColor: "#86efac" },
-  academicQText: { fontSize: 13, color: "#374151", marginBottom: 12, lineHeight: 18 },
-  academicQNum: { fontWeight: "700", color: "#94a3b8" },
-
-  mcqOptions: { gap: 8 },
-  mcqOpt: { borderWidth: 2, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "white" },
-  mcqOptSelected: { borderColor: "#4da3f5", backgroundColor: "#eff6ff" },
-  mcqOptText: { fontSize: 12, color: "#374151" },
-  mcqOptTextSelected: { color: "#1d4ed8", fontWeight: "700" },
-
-  likertScroll: { marginTop: 0 },
-  likertOpt: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 2, borderColor: "#e2e8f0", marginRight: 8, backgroundColor: "white" },
-  likertOptSelected: { borderColor: "#2bbbad", backgroundColor: "#f0fdf4" },
-  likertOptText: { fontSize: 11, fontWeight: "600", color: "#64748b", whiteSpace: "nowrap" },
-  likertOptTextSelected: { color: "#1a7a74" },
+  // Academic / aptitude
+  academicQ:        { backgroundColor: "#f8fafc", borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 2, borderColor: "transparent" },
+  academicQAnswered:{ borderColor: "#86efac" },
+  academicQText:    { fontSize: 13, color: "#374151", marginBottom: 12, lineHeight: 18 },
+  academicQNum:     { fontWeight: "700", color: "#94a3b8" },
+  mcqOptions:       { gap: 8 },
+  mcqOpt:           { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 2, borderColor: "#e2e8f0", borderRadius: 10, padding: 10, backgroundColor: "white" },
+  mcqOptSelected:   { borderColor: "#4da3f5", backgroundColor: "#eff6ff" },
+  mcqLabel:         { fontSize: 12, fontWeight: "700", color: "#94a3b8", minWidth: 16 },
+  mcqLabelSelected: { color: "#1d4ed8" },
+  mcqValue:         { fontSize: 12, color: "#374151", flex: 1 },
+  mcqValueSelected: { color: "#1d4ed8", fontWeight: "600" },
 
   // Save section button
-  saveSectionBtn: { marginTop: 16, backgroundColor: "#4da3f5", borderRadius: 10, padding: 13, alignItems: "center" },
+  saveSectionBtn:     { marginTop: 16, backgroundColor: "#4da3f5", borderRadius: 10, padding: 13, alignItems: "center" },
   saveSectionBtnText: { color: "white", fontSize: 14, fontWeight: "700" },
 
   // Submit
-  submitArea: { paddingVertical: 20, alignItems: "center" },
-  submitBtn: { backgroundColor: "#FBB217", borderRadius: 12, paddingHorizontal: 32, paddingVertical: 15, shadowColor: "#FBB217", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
-  submitBtnText: { color: "white", fontSize: 15, fontWeight: "700" },
-  submitHint: { fontSize: 12, color: "#94a3b8", textAlign: "center" },
+  submitArea:   { paddingVertical: 20, alignItems: "center" },
+  submitBtn:    { backgroundColor: "#FBB217", borderRadius: 12, paddingHorizontal: 32, paddingVertical: 15, elevation: 4 },
+  submitBtnText:{ color: "white", fontSize: 15, fontWeight: "700" },
+  submitHint:   { fontSize: 12, color: "#94a3b8", textAlign: "center" },
+  submitError:  { fontSize: 13, color: "#be123c", marginBottom: 12, textAlign: "center" },
 
   // Done screen
-  doneContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 40 },
-  doneIcon: { fontSize: 60, marginBottom: 16 },
-  doneTitle: { fontSize: 24, fontWeight: "700", color: "#1e293b", marginBottom: 10, textAlign: "center" },
-  doneSub: { fontSize: 14, color: "#64748b", textAlign: "center", lineHeight: 22, marginBottom: 28 },
-  doneBtn: { backgroundColor: "#FBB217", paddingHorizontal: 28, paddingVertical: 14, borderRadius: 12 },
-  doneBtnText: { color: "white", fontSize: 15, fontWeight: "700" },
+  doneContainer:{ flex: 1, justifyContent: "center", alignItems: "center", padding: 40 },
+  doneIcon:     { fontSize: 60, marginBottom: 16 },
+  doneTitle:    { fontSize: 24, fontWeight: "700", color: "#1e293b", marginBottom: 10, textAlign: "center" },
+  doneSub:      { fontSize: 14, color: "#64748b", textAlign: "center", lineHeight: 22, marginBottom: 28 },
+  doneBtn:      { backgroundColor: "#FBB217", paddingHorizontal: 28, paddingVertical: 14, borderRadius: 12 },
+  doneBtnText:  { color: "white", fontSize: 15, fontWeight: "700" },
 });
